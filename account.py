@@ -191,7 +191,7 @@ class Account(DeactivableMixin, ModelSQL, ModelView):
 
         ids = [a.id for a in accounts]
         childs = cls.search([('parent', 'child_of', ids)])
-        all_ids = {}.fromkeys(ids + [c.id for c in childs]).keys()
+        all_ids = list({}.fromkeys(ids + [c.id for c in childs]).keys())
 
         id2account = {}
         all_accounts = cls.browse(all_ids)
@@ -283,9 +283,9 @@ class Account(DeactivableMixin, ModelSQL, ModelView):
 
     def get_rec_name(self, name):
         if self.code:
-            return self.code + ' - ' + unicode(self.name)
+            return self.code + ' - ' + str(self.name)
         else:
-            return unicode(self.name)
+            return str(self.name)
 
     @classmethod
     def search_rec_name(cls, name, clause):
