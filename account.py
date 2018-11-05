@@ -8,7 +8,8 @@ from sql.aggregate import Sum
 from sql.conditionals import Coalesce
 
 from trytond import backend
-from trytond.model import ModelView, ModelSQL, DeactivableMixin, fields, Unique
+from trytond.model import (ModelView, ModelSQL, DeactivableMixin, fields,
+    Unique, tree)
 from trytond.wizard import Wizard, StateView, StateAction, Button
 from trytond.pyson import Eval, If, PYSONEncoder, PYSONDecoder
 from trytond.transaction import Transaction
@@ -19,7 +20,9 @@ __all__ = ['Account', 'AccountDistribution',
     'AnalyticAccountEntry', 'AnalyticMixin']
 
 
-class Account(DeactivableMixin, ModelSQL, ModelView):
+class Account(
+        DeactivableMixin, tree('distribution_parents'), tree(),
+        ModelSQL, ModelView):
     'Analytic Account'
     __name__ = 'analytic_account.account'
     name = fields.Char('Name', required=True, translate=True, select=True)
@@ -109,14 +112,13 @@ class Account(DeactivableMixin, ModelSQL, ModelView):
         cls._error_messages.update({
                 'invalid_distribution': (
                     'The distribution sum of account "%(account)s" '
-                    'is not 100%.'),
+                    'is not 100%%.'),
                 })
 
     @classmethod
     def __register__(cls, module_name):
-        TableHandler = backend.get('TableHandler')
         super(Account, cls).__register__(module_name)
-        table = TableHandler(cls, module_name)
+        table = cls.__table_handler__(module_name)
 
         # Migration from 4.0: remove currency
         table.not_null_action('currency', action='remove')
@@ -144,8 +146,6 @@ class Account(DeactivableMixin, ModelSQL, ModelView):
     @classmethod
     def validate(cls, accounts):
         super(Account, cls).validate(accounts)
-        cls.check_recursion(accounts)
-        cls.check_recursion(accounts, parent='distribution_parents')
         for account in accounts:
             account.check_distribution()
 
@@ -423,7 +423,7 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
             migration_3_4 = True
 
         # Don't create table before renaming
-        table = TableHandler(cls, module_name)
+        table = cls.__table_handler__(module_name)
 
         super(AnalyticAccountEntry, cls).__register__(module_name)
 
@@ -514,12 +514,11 @@ class AnalyticMixin(object):
     def __register__(cls, module_name):
         pool = Pool()
         AccountEntry = pool.get('analytic.account.entry')
-        TableHandler = backend.get('TableHandler')
         cursor = Transaction().connection.cursor()
 
         super(AnalyticMixin, cls).__register__(module_name)
 
-        handler = TableHandler(cls, module_name)
+        handler = cls.__table_handler__(module_name)
         # Migration from 3.4: analytic accounting changed to reference field
         if handler.column_exist('analytic_accounts'):
             entry = AccountEntry.__table__()
