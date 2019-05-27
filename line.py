@@ -43,18 +43,10 @@ class Line(ModelSQL, ModelView):
         super(Line, cls).__setup__()
         t = cls.__table__()
         cls._sql_constraints += [
-            ('credit_debit',
-                Check(t,
-                    (t.credit * t.debit == 0) & (t.credit + t.debit >= 0)),
-                'Wrong credit/debit values.'),
+            ('credit_debit_',
+                Check(t, t.credit * t.debit == 0),
+                'account.msg_line_debit_credit'),
             ]
-        cls._error_messages.update({
-                'line_on_view_account': (
-                    'You can not create a move line using '
-                    'view account "%s".'),
-                'line_on_inactive_account': ('You can not create a move line '
-                    'using inactive account "%s".'),
-                })
         cls._order.insert(0, ('date', 'ASC'))
 
     @classmethod
@@ -65,6 +57,9 @@ class Line(ModelSQL, ModelView):
         # Migration from 4.0: remove name and journal
         for field_name in ['name', 'journal']:
             table.not_null_action(field_name, action='remove')
+
+        # Migration from 5.0: replace credit_debit constraint by credit_debit_
+        table.drop_constraint('credit_debit')
 
     @staticmethod
     def default_date():
@@ -144,20 +139,6 @@ class Line(ModelSQL, ModelView):
         MoveLine.set_analytic_state(move_lines)
         MoveLine.save(move_lines)
 
-    @classmethod
-    def validate(cls, lines):
-        super(Line, cls).validate(lines)
-        for line in lines:
-            line.check_account()
-
-    def check_account(self):
-        if self.account.type == 'view':
-            self.raise_user_error('line_on_view_account',
-                (self.account.rec_name,))
-        if not self.account.active:
-            self.raise_user_error('line_on_inactive_account',
-                (self.account.rec_name,))
-
 
 class Move(metaclass=PoolMeta):
     __name__ = 'account.move'
@@ -230,6 +211,12 @@ class MoveLine(ModelSQL, ModelView):
             'party': self.party.id if self.party else None,
             }
 
+    @property
+    def must_have_analytic(self):
+        "If the line must have analytic lines set"
+        if self.account.type:
+            return self.account.type.statement == 'income'
+
     @classmethod
     def apply_rule(cls, lines):
         pool = Pool()
@@ -238,6 +225,8 @@ class MoveLine(ModelSQL, ModelView):
         rules = Rule.search([])
 
         for line in lines:
+            if not line.must_have_analytic:
+                continue
             if line.analytic_lines:
                 continue
             pattern = line.rule_pattern
@@ -255,16 +244,7 @@ class MoveLine(ModelSQL, ModelView):
     @classmethod
     def set_analytic_state(cls, lines):
         pool = Pool()
-        AccountType = pool.get('account.account.type')
         AnalyticAccount = pool.get('analytic_account.account')
-
-        income_types = AccountType.search([
-                ('income_statement', '=', True),
-                ])
-        income_types = AccountType.search([
-                ('parent', 'child_of', [t.id for t in income_types]),
-                ])
-        income_types = set(income_types)
 
         roots = AnalyticAccount.search([
                 ('parent', '=', None),
@@ -272,7 +252,7 @@ class MoveLine(ModelSQL, ModelView):
         roots = set(roots)
 
         for line in lines:
-            if line.account.type not in income_types:
+            if not line.must_have_analytic:
                 if not line.analytic_lines:
                     line.analytic_state = 'valid'
                 else:
