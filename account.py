@@ -3,7 +3,7 @@
 from decimal import Decimal
 from collections import defaultdict
 
-from sql import Column
+from sql import Column, Literal, Null
 from sql.aggregate import Sum
 from sql.conditionals import Coalesce
 
@@ -17,10 +17,6 @@ from trytond.transaction import Transaction
 from trytond.pool import Pool
 
 from .exceptions import AccountValidationError
-
-__all__ = ['Account', 'AccountDistribution',
-    'OpenChartAccountStart', 'OpenChartAccount',
-    'AnalyticAccountEntry', 'AnalyticMixin']
 
 
 class Account(
@@ -153,9 +149,10 @@ class Account(
         return 2
 
     @fields.depends('parent', 'type',
-        '_parent_parent.root', '_parent_parent.type')
+        '_parent_parent.id', '_parent_parent.root', '_parent_parent.type')
     def on_change_parent(self):
-        if self.parent and self.type != 'root':
+        if (self.parent and self.parent.id is not None and self.parent.id > 0
+                and self.type != 'root'):
             if self.parent.type == 'root':
                 self.root = self.parent
             else:
@@ -191,7 +188,7 @@ class Account(
                 Sum(Coalesce(line.credit, 0) - Coalesce(line.debit, 0)),
                 where=(table.type != 'view')
                 & table.id.in_(all_ids)
-                & (table.active == True) & line_query,
+                & (table.active == Literal(True)) & line_query,
                 group_by=table.id))
         account_sum = defaultdict(Decimal)
         for account_id, value in cursor.fetchall():
@@ -245,7 +242,7 @@ class Account(
                 ).select(*columns,
                 where=(table.type != 'view')
                 & table.id.in_(ids)
-                & (table.active == True) & line_query,
+                & (table.active == Literal(True)) & line_query,
                 group_by=table.id))
 
         for row in cursor.fetchall():
@@ -389,14 +386,13 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
     def __register__(cls, module_name):
         pool = Pool()
         Account = pool.get('analytic_account.account')
-        TableHandler = backend.get('TableHandler')
         cursor = Transaction().connection.cursor()
 
         # Migration from 3.4: use origin as the key for One2Many
         migration_3_4 = False
         old_table = 'analytic_account_account_selection_rel'
-        if TableHandler.table_exist(old_table):
-            TableHandler.table_rename(old_table, cls._table)
+        if backend.TableHandler.table_exist(old_table):
+            backend.TableHandler.table_rename(old_table, cls._table)
             migration_3_4 = True
 
         # Don't create table before renaming
@@ -465,7 +461,7 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
 
 
 class AnalyticMixin(object):
-
+    __slots__ = ()
     analytic_accounts = fields.One2Many('analytic.account.entry', 'origin',
         'Analytic Accounts',
         size=Eval('analytic_accounts_size', 0),
@@ -487,7 +483,7 @@ class AnalyticMixin(object):
             entry = AccountEntry.__table__()
             table = cls.__table__()
             cursor.execute(*table.select(table.id, table.analytic_accounts,
-                    where=table.analytic_accounts != None))
+                    where=table.analytic_accounts != Null))
             for line_id, selection_id in cursor.fetchall():
                 cursor.execute(*entry.update(
                         columns=[entry.origin],

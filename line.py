@@ -11,8 +11,6 @@ from trytond.pyson import Eval, PYSONEncoder
 from trytond.transaction import Transaction
 from trytond.pool import Pool, PoolMeta
 
-__all__ = ['Line', 'Move', 'MoveLine', 'OpenAccount']
-
 
 class Line(ModelSQL, ModelView):
     'Analytic Line'
@@ -238,7 +236,7 @@ class MoveLine(ModelSQL, ModelView):
             analytic_lines = []
             for entry in rule.analytic_accounts:
                 analytic_lines.extend(
-                    entry.get_analytic_lines(line, line.move.post_date))
+                    entry.get_analytic_lines(line, line.date))
             line.analytic_lines = analytic_lines
 
     @classmethod
