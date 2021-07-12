@@ -14,6 +14,7 @@ from trytond.model import (ModelView, ModelSQL, DeactivableMixin, fields,
 from trytond.wizard import Wizard, StateView, StateAction, Button
 from trytond.pyson import Eval, If, PYSONEncoder, PYSONDecoder
 from trytond.transaction import Transaction
+from trytond.tools import lstrip_wildcard
 from trytond.pool import Pool
 
 from .exceptions import AccountValidationError
@@ -191,7 +192,7 @@ class Account(
                 & (table.active == Literal(True)) & line_query,
                 group_by=table.id))
         account_sum = defaultdict(Decimal)
-        for account_id, value in cursor.fetchall():
+        for account_id, value in cursor:
             account_sum.setdefault(account_id, Decimal('0.0'))
             # SQLite uses float for SUM
             if not isinstance(value, Decimal):
@@ -245,7 +246,7 @@ class Account(
                 & (table.active == Literal(True)) & line_query,
                 group_by=table.id))
 
-        for row in cursor.fetchall():
+        for row in cursor:
             account_id = row[0]
             for i, name in enumerate(names, 1):
                 value = row[i]
@@ -268,11 +269,17 @@ class Account(
 
     @classmethod
     def search_rec_name(cls, name, clause):
-        accounts = cls.search([('code',) + tuple(clause[1:])], limit=1)
-        if accounts:
-            return [('code',) + tuple(clause[1:])]
+        if clause[1].startswith('!') or clause[1].startswith('not '):
+            bool_op = 'AND'
         else:
-            return [(cls._rec_name,) + tuple(clause[1:])]
+            bool_op = 'OR'
+        code_value = clause[2]
+        if clause[1].endswith('like'):
+            code_value = lstrip_wildcard(clause[2])
+        return [bool_op,
+            ('code', clause[1], code_value) + tuple(clause[3:]),
+            (cls._rec_name,) + tuple(clause[1:]),
+            ]
 
     def distribute(self, amount):
         "Return a list of (account, amount) distribution"
@@ -386,7 +393,9 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
     def __register__(cls, module_name):
         pool = Pool()
         Account = pool.get('analytic_account.account')
-        cursor = Transaction().connection.cursor()
+        transaction = Transaction()
+        cursor = transaction.connection.cursor()
+        update = transaction.connection.cursor()
 
         # Migration from 3.4: use origin as the key for One2Many
         migration_3_4 = False
@@ -406,8 +415,8 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
             cursor.execute(*account.select(account.id, account.root,
                     where=account.type != 'root'))
             entry = cls.__table__()
-            for account_id, root_id in cursor.fetchall():
-                cursor.execute(*entry.update(
+            for account_id, root_id in cursor:
+                update.execute(*entry.update(
                         columns=[entry.root],
                         values=[root_id],
                         where=entry.account == account_id))
@@ -430,11 +439,9 @@ class AnalyticAccountEntry(ModelView, ModelSQL):
     @classmethod
     def get_origin(cls):
         Model = Pool().get('ir.model')
+        get_name = Model.get_name
         models = cls._get_origin()
-        models = Model.search([
-                ('model', 'in', models),
-                ])
-        return [(None, '')] + [(m.model, m.name) for m in models]
+        return [(None, '')] + [(m, get_name(m)) for m in models]
 
     def on_change_with_company(self, name=None):
         return None
@@ -473,7 +480,9 @@ class AnalyticMixin(object):
     def __register__(cls, module_name):
         pool = Pool()
         AccountEntry = pool.get('analytic.account.entry')
-        cursor = Transaction().connection.cursor()
+        transaction = Transaction()
+        cursor = transaction.connection.cursor()
+        update = transaction.connection.cursor()
 
         super(AnalyticMixin, cls).__register__(module_name)
 
@@ -484,8 +493,8 @@ class AnalyticMixin(object):
             table = cls.__table__()
             cursor.execute(*table.select(table.id, table.analytic_accounts,
                     where=table.analytic_accounts != Null))
-            for line_id, selection_id in cursor.fetchall():
-                cursor.execute(*entry.update(
+            for line_id, selection_id in cursor:
+                update.execute(*entry.update(
                         columns=[entry.origin],
                         values=['%s,%s' % (cls.__name__, line_id)],
                         where=entry.selection == selection_id))

@@ -2,6 +2,7 @@
 # this repository contains the full copyright notices and license terms.
 from decimal import Decimal
 from collections import defaultdict
+from itertools import groupby
 
 from sql import Literal
 
@@ -179,6 +180,12 @@ class MoveLine(ModelSQL, ModelView):
     @classmethod
     def __setup__(cls):
         super(MoveLine, cls).__setup__()
+        cls._buttons.update({
+            'apply_analytic_rules': {
+                'invisible': Eval('analytic_state') != 'draft',
+                'depends': ['analytic_state'],
+                },
+            })
         cls._check_modify_exclude |= {'analytic_lines', 'analytic_state'}
 
     @classmethod
@@ -212,8 +219,14 @@ class MoveLine(ModelSQL, ModelView):
     @property
     def must_have_analytic(self):
         "If the line must have analytic lines set"
+        pool = Pool()
+        FiscalYear = pool.get('account.fiscalyear')
         if self.account.type:
-            return self.account.type.statement == 'income'
+            return self.account.type.statement == 'income' and not (
+                # ignore balance move of non-deferral account
+                self.journal.type == 'situation'
+                and self.period.type == 'adjustment'
+                and isinstance(self.move.origin, FiscalYear))
 
     @classmethod
     def apply_rule(cls, lines):
@@ -246,8 +259,11 @@ class MoveLine(ModelSQL, ModelView):
 
         roots = AnalyticAccount.search([
                 ('parent', '=', None),
-                ])
-        roots = set(roots)
+                ],
+            order=[('company', 'ASC')])
+        company2roots = {
+            company: set(roots)
+            for company, roots in groupby(roots, key=lambda r: r.company)}
 
         for line in lines:
             if not line.must_have_analytic:
@@ -260,6 +276,7 @@ class MoveLine(ModelSQL, ModelView):
             for analytic_line in line.analytic_lines:
                 amount = analytic_line.debit - analytic_line.credit
                 amounts[analytic_line.account.root] += amount
+            roots = company2roots[line.move.company]
             if not roots <= set(amounts.keys()):
                 line.analytic_state = 'draft'
                 continue
@@ -271,6 +288,13 @@ class MoveLine(ModelSQL, ModelView):
             else:
                 line.analytic_state = 'valid'
 
+    @classmethod
+    @ModelView.button
+    def apply_analytic_rules(cls, lines):
+        cls.apply_rule(lines)
+        cls.set_analytic_state(lines)
+        cls.save(lines)
+
 
 class OpenAccount(Wizard):
     'Open Account'
@@ -280,7 +304,7 @@ class OpenAccount(Wizard):
 
     def do_open_(self, action):
         action['pyson_domain'] = [
-            ('account', '=', Transaction().context['active_id']),
+            ('account', '=', self.record.id if self.record else None),
             ]
         if Transaction().context.get('start_date'):
             action['pyson_domain'].append(
@@ -290,6 +314,8 @@ class OpenAccount(Wizard):
             action['pyson_domain'].append(
                 ('date', '<=', Transaction().context['end_date'])
                 )
+        if self.record:
+            action['name'] += ' (%s)' % self.record.rec_name
         action['pyson_domain'] = PYSONEncoder().encode(action['pyson_domain'])
         return action, {}
 
