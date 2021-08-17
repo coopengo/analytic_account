@@ -16,7 +16,7 @@ this repository contains the full copyright notices and license terms. -->
         </record>
 
         <record model="ir.action.act_window" id="act_rule_form">
-            <field name="name">Analytic Rules</field>
+            <field name="name">Rules</field>
             <field name="res_model">analytic_account.rule</field>
         </record>
         <record model="ir.action.act_window.view" id="act_rule_form_view1">
@@ -29,20 +29,23 @@ this repository contains the full copyright notices and license terms. -->
             <field name="view" ref="rule_view_form"/>
             <field name="act_window" ref="act_rule_form"/>
         </record>
-        <menuitem parent="menu_analytic_account_configuration"
-            action="act_rule_form" id="menu_rule_form"/>
+        <menuitem
+            parent="menu_analytic_account_configuration"
+            action="act_rule_form"
+            sequence="50"
+            id="menu_rule_form"/>
 
-        <record model="ir.rule.group" id="rule_group_rule">
-            <field name="name">User in company</field>
+        <record model="ir.rule.group" id="rule_group_rule_companies">
+            <field name="name">User in companies</field>
             <field name="model"
                 search="[('model', '=', 'analytic_account.rule')]"/>
             <field name="global_p" eval="True"/>
         </record>
-        <record model="ir.rule" id="rule_rule1">
+        <record model="ir.rule" id="rule_rule_companies">
             <field name="domain"
-                eval="[('company', 'in', Eval('user', {}).get('companies', []))]"
+                eval="[('company', 'in', Eval('companies', []))]"
                 pyson="1"/>
-            <field name="rule_group" ref="rule_group_rule"/>
+            <field name="rule_group" ref="rule_group_rule_companies"/>
         </record>
 
         <record model="ir.model.access" id="access_rule">
